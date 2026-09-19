@@ -598,22 +598,27 @@ replacing the file and restarting the client.
 process under `launchd`, `mcp.run(transport="streamable-http", ...)` with a
 `transport_security` allowlist for the machine's hostname, TLS terminated by
 a reverse proxy (then serve `mcp.streamable_http_app()` with `uvicorn
---proxy-headers --forwarded-allow-ips=<proxy>`). Authentication is a
-`TokenVerifier` subclass whose `verify_token` compares the bearer token to a
-pre-shared secret and returns an `AccessToken` or `None`; it is passed
-together with `AuthSettings(...)` to the `MCPServer` constructor, and the
-server then does the 401 plus `WWW-Authenticate` exchange correctly. This is
-the resource-server half of OAuth without an authorization server, which is
-off-spec for token issuance but works for any client that sends a
-preconfigured header. Claude Code does: `claude mcp add --transport http
-jtari-lab https://<host>/mcp --header "Authorization: Bearer ${JTARI_TOKEN}"`.
-**Claude Desktop does not**, for two independent reasons: custom connectors
-must be reachable from Anthropic's egress range `160.79.104.0/21` over the
-public internet, so a UM-network-only box fails to connect at all; and their
-default auth is OAuth discovery, which follows the placeholder issuer URL to
-nowhere. A static-header option exists in beta for some organizations. Lab
-members on Claude Desktop therefore either run stdio locally against a copy
-of the DuckDB file or wait for a public HTTPS endpoint.
+--proxy-headers --forwarded-allow-ips=<proxy>`). Authentication for a
+pre-shared bearer token has two SDK-compatible shapes. The plan's v2 choice
+is a small Starlette middleware on the ASGI app that checks
+`Authorization: Bearer` and returns a bare 401. The MCP-native shape is a
+`TokenVerifier` subclass whose `verify_token` compares the token and returns
+an `AccessToken` or `None`, passed together with `AuthSettings(...)` to the
+`MCPServer` constructor; the server then does the spec's 401 plus
+`WWW-Authenticate` exchange. That second shape is the resource-server half
+of OAuth, and it requires an `issuer_url`, so without a real authorization
+server it advertises a placeholder that OAuth-discovering clients follow to
+nowhere. It becomes the right slot when a real issuer (UM Okta) exists.
+Either way, any client that sends a preconfigured header works. Claude Code
+does: `claude mcp add --transport http jtari-lab https://<host>/mcp --header
+"Authorization: Bearer ${JTARI_TOKEN}"`. **Claude Desktop custom connectors
+do not**: they are contacted from Anthropic's egress range `160.79.104.0/21`
+over the public internet, so a UM-network-only box fails to connect at all,
+and their default auth is OAuth discovery (a static-header option exists in
+beta for some organizations). Lab members on Claude Desktop instead use the
+`mcp-remote` stdio bridge in `claude_desktop_config.json`, which runs on
+their own Mac and forwards to the campus URL with the header, or run the
+server locally against a copy of the DuckDB file.
 Sources: https://py.sdk.modelcontextprotocol.io/run/authorization/ ,
 https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp
 
@@ -813,8 +818,10 @@ in the resource metadata to the placeholder issuer URL and fails, because the
 static-token pattern has no authorization server. Claude Code connects from
 the user's own machine and sends a preconfigured header, so `claude mcp add
 --transport http ... --header "Authorization: Bearer ..."` works from any
-machine that can reach the Mac Studio. Their options: run the server locally
-over stdio against a copy of the DuckDB file; use Claude Code; or wait for a
-public HTTPS deployment with OAuth or the static-header beta enabled for the
-UM organization.
+machine that can reach the Mac Studio. Their options: add the `mcp-remote`
+stdio bridge to `claude_desktop_config.json` (it runs on their Mac, on the
+U-M VPN if off campus, and forwards to the campus URL with the bearer
+header); run the server locally over stdio against a copy of the DuckDB
+file; use Claude Code; or wait for a public HTTPS deployment with OAuth or
+the static-header beta enabled for the UM organization.
 </details>
