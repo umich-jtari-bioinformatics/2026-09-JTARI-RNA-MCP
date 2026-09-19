@@ -783,22 +783,33 @@ exist in both, which is the one deliberate cross-dataset bridge in the
 resource.
 </details>
 
-**Q6.** For H2228 chronic contrasts with the default `exclude_suspect=True`,
-predict what happens to the `Cmax_BR3` and `StartIC50_BR2` groups and what
-the tool should say about it.
+**Q6.** The lab labelled two chronic derivations `H2228 Cmax_BR3` and
+`H2228 StartIC50_BR2`. Somalier called half of each group DFCI032
+(`reassigned`) and the other half `unresolved` (`suspect`). With the default
+`include_suspect=False` and the plan's rule that `cell_line` is the
+molecular identity, predict what `contrast(design="chronic")` returns for
+H2228 and for DFCI032, and say why the server does not simply keep the lab
+label.
 
 <details><summary>Intended answer</summary>
 
 Each chronic derivation is 8 samples: 4 at dose 0 and 4 on-drug, split 2/2
-across batches 1 and 2. In those two H2228 groups the batch-1 halves are
-`identity_call = DFCI032, identity_status = reassigned` and the batch-2 halves
-are `unresolved, suspect`. Excluding `suspect` removes the batch-2 samples,
-leaving a dose-0 numerator of n = 2, both called DFCI032 by somalier, paired
-against an H2228 parental. That log2FC is a line-identity difference, not a
-resistance effect. The tool must report `n` and the `identity_status`
-composition of each group and flag a numerator that is entirely `reassigned`.
-This is also why the default excludes `suspect` only rather than restricting
-to `confirmed`, which would leave 60 of 679 samples.
+across batches 1 and 2. In those two groups the batch-1 halves are
+`identity_call = DFCI032, identity_status = reassigned`, the batch-2 halves
+`unresolved, suspect`. Because `cell_line` is the effective identity, the
+reassigned samples are served as `cell_line = DFCI032` with
+`cell_line_recorded = H2228`. For **H2228**, Cmax_BR3 and StartIC50_BR2 have
+no non-suspect samples left: the tool returns those rows with n = 0 and a
+flag, not silently dropped, so the user sees that the derivation exists but
+is unusable. For **DFCI032**, two new derivations appear (dose-0 numerator
+n = 2 each, flagged `cell_line_recorded = H2228`) paired against the
+confirmed DFCI032 parental. Keeping the lab label would have paired
+DFCI032 cells against an H2228 parental and reported a line-identity
+difference as a resistance effect, and a search for "H2228" would have
+returned cells that are almost certainly not H2228. The default excludes
+`suspect` only, rather than restricting to `confirmed`, because `confirmed`
+covers 60 of 679 samples and `unverified` means "no call recorded", not
+"failed".
 </details>
 
 ### Phase 5: Streamable HTTP and deployment

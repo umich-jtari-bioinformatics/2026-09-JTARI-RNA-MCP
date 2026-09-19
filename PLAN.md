@@ -85,8 +85,9 @@ CREATE TABLE samples (
   matrix_sample_id VARCHAR NOT NULL,
   label VARCHAR,                           -- display only, never a key
   dataset VARCHAR NOT NULL,                -- LOCAL | E11304 | E11342 | E11834 | FL3C
-  cell_line VARCHAR NOT NULL,              -- canonical, as recorded by the lab
-  cell_line_raw VARCHAR,
+  cell_line VARCHAR NOT NULL,              -- effective identity: molecular call where reassigned, else the lab label (decision 8.8)
+  cell_line_recorded VARCHAR NOT NULL,     -- the lab label before any identity reassignment (H2228 for the 12 reassigned rows)
+  cell_line_raw VARCHAR,                   -- as given by the source file
   parent_line VARCHAR,                     -- as in source (mostly empty; not used for pairing)
   lineage VARCHAR, fusion VARCHAR, fusion_source VARCHAR,
   perturbation_class VARCHAR NOT NULL,     -- baseline | acute_drug | chronic_resistance | transgene_induction
@@ -103,7 +104,11 @@ CREATE TABLE samples (
   notes VARCHAR,
   -- derived at build (documented in the schema resource; not in the upstream TSV):
   construct VARCHAR,                       -- E11304 only: EV | V1 | V3 | KIF5B | TFG
-  fl3c_subtype VARCHAR, fl3c_kras VARCHAR, fl3c_egfr VARCHAR, fl3c_tp53 VARCHAR, fl3c_prolif72h DOUBLE  -- parsed from FL3C notes (pending decision 8.4)
+  -- annotation columns (decision 8.4): read from the updated upstream metadata sheet when present,
+  -- otherwise parsed from FL3C `notes` at build; NULL where unknown. Names to be settled with you.
+  histology VARCHAR,                       -- e.g. lung_adenocarcinoma, nonadeno_nsclc (FL3C "subtype")
+  mut_kras VARCHAR, mut_egfr VARCHAR, mut_tp53 VARCHAR, mut_braf VARCHAR,  -- protein-level calls, e.g. 'p.G12C'; 'WT'; NULL = not assessed
+  proliferation_72h DOUBLE                 -- FL3C 72 h proliferation measure
 );
 
 CREATE TABLE genes (
@@ -132,7 +137,9 @@ CREATE TABLE provenance (key VARCHAR PRIMARY KEY, value VARCHAR);
 -- n_samples=679, n_genes=78932, datasets_included
 ```
 
-`genes` build: download the Ensembl 113 GTF (record URL + sha256), parse `gene` features -> `gene_id, gene_name, gene_biotype`; assert the ID set equals the matrix set (78,932, zero missing); cross-check `gene_name` against `annot.tsv` `external_gene_name` and log disagreements into provenance. If the download is unavailable, fail loudly; no silent fallback to the 54%-coverage annot file. A `--gtf PATH` flag accepts a copy scp'd from Armis2.
+`genes` build: read the Ensembl 113 GTF from the data directory (`--gtf PATH`, default `$JTARI_DATA_DIR/Homo_sapiens.GRCh38.113.gtf.gz`; you are placing a copy there, decision 8.11), record its sha256, parse `gene` features -> `gene_id, gene_name, gene_biotype`; assert the ID set equals the matrix set (78,932, zero missing); cross-check `gene_name` against `annot.tsv` `external_gene_name` and log disagreements into provenance. If the GTF is missing, fail loudly; no silent fallback to the 54%-coverage annot file. `--download-gtf` fetches the public Ensembl copy as a convenience.
+
+Identity relabeling (decision 8.8, your answer 2026-09-19): the 12 `reassigned` rows are served with `cell_line = identity_call` (DFCI032) and `cell_line_recorded = H2228`, so a search or contrast on `H2228` never returns them and a search on `DFCI032` does. Preferred implementation: make the change in the upstream metadata sheet you are updating anyway (set `cell_line`, keep the lab label in `cell_line_recorded`, set `parent_line = DFCI032`), so the data is the truth and the server has no relabel logic. The build script asserts `identity_status = 'reassigned' implies cell_line = identity_call` and fails otherwise. The 8 `suspect` rows (unresolved H2228/DFCI032 mixtures) keep `cell_line = H2228` but are excluded by default from every tool and flagged whenever included. Consequence for `contrast`: DFCI032 gains chronic derivations (Cmax "BR3" 4 samples, StartIC50 "BR2" 4, StartIC50 "BR3" 4; the BR labels are inherited from the H2228 derivation series) paired against the confirmed DFCI032 parental (4 samples, 2 at 0 nM), and H2228 loses them.
 
 `build_db.py --datasets` selects which cohorts to load, so one script produces `jtari-full.duckdb` (with LOCAL, restricted) and `jtari-public.duckdb` (the four public cohorts). Two files, not row-level access filtering: a missed filter in one tool would leak Moderate data; a separate file cannot.
 
@@ -150,7 +157,7 @@ CREATE TABLE provenance (key VARCHAR PRIMARY KEY, value VARCHAR);
 Stack: `mcp>=2.2,<3` (`from mcp.server import MCPServer`), Python 3.12 (pyenv 3.12.0 present; uv can also manage it), `duckdb>=1.4,<2` (benchmarked on 1.4.5; 1.5.5 is current on PyPI), `pydantic>=2.12` (SDK dep), `uv` 0.10.9. Package `jtari_mcp`, console script `jtari-mcp`, env var `JTARI_DB` (path to the DuckDB file). One `MCPServer("jtari", instructions=..., lifespan=open_duckdb)`; every tool carries `ToolAnnotations(read_only_hint=True, open_world_hint=False)`.
 
 Conventions shared by all tools:
-- **Identity guardrail**: `include_suspect: bool = False` on every sample-returning tool. `identity_status` and `identity_call` come back with every sample row. `cell_line` is served **as recorded by the lab**; when `identity_call` is non-empty and differs, the row is returned unchanged and the response carries a top-level `identity_flags` list (e.g. `"12 rows have identity_call=DFCI032 but cell_line=H2228 (reassigned); treat as DFCI032 biology"`). Never silently relabel (pending decision 8.8).
+- **Identity guardrail**: `include_suspect: bool = False` on every sample-returning tool. `identity_status`, `identity_call` and `cell_line_recorded` come back with every sample row. `cell_line` is the **effective identity** (molecular call where `reassigned`, section 2.2), so `H2228` queries never return DFCI032 material. Rows whose `cell_line` differs from `cell_line_recorded` add a top-level `identity_flags` entry (e.g. `"12 rows are served as DFCI032 (somalier); the lab label was H2228 Cmax_BR3 / StartIC50_BR2 / StartIC50_BR3"`). Suspect rows, when included, are always flagged.
 - **Filters** (`find_samples`, `get_expression`): `filters: dict[str, str | int | list[str | int] | None]`. Scalar = equals, list = any-of, `None` = `IS NULL`. Keys are validated against the `samples` columns; an unknown key raises `ToolError` listing the valid columns.
 - **Genes**: `get_expression` and `contrast` accept symbols or ENSG IDs and resolve internally. A symbol with several ENSG matches raises `ToolError` naming the candidates and pointing to `resolve_genes`.
 - **Errors**: anything the model could fix (unknown gene, unknown column, too many rows) raises `ToolError` with an actionable message. Never return an error string.
@@ -192,7 +199,7 @@ Pairing rules, all within `dataset`. `parent_line` is not used (empty for every 
 
 | design | group | control | notes |
 |---|---|---|---|
-| `chronic` | `cell_line=L, resistance_protocol=P, derivation_replicate=BR, dose_nM=0` | `cell_line=L, perturbation_class=baseline, dose_nM=0` | LOCAL only. One row per (L, P, BR). `on_drug=true` instead compares the same derivation at its maintenance dose (1300/1500 nM) to itself at 0 nM (residual drug dependence). Flag when the group is left with only `reassigned` samples (H2228 Cmax_BR3 / StartIC50_BR2 after suspect exclusion). |
+| `chronic` | `cell_line=L, resistance_protocol=P, derivation_replicate=BR, dose_nM=0` | `cell_line=L, perturbation_class=baseline, dose_nM=0` | LOCAL only. One row per (L, P, BR). `on_drug=true` instead compares the same derivation at its maintenance dose (1300/1500 nM) to itself at 0 nM (residual drug dependence). With the effective `cell_line`, the reassigned derivations pair with the DFCI032 parental and are flagged (`cell_line_recorded=H2228`); H2228 Cmax_BR3 and StartIC50_BR2 then have no non-suspect samples and are reported with n=0 and a flag rather than dropped. |
 | `acute` | `cell_line=L, compound=C, dose_nM=D, timepoint_h=T` (D, T may be NULL) | `cell_line=L, compound=none`; `timepoint_h=T` when the controls of L in that dataset carry timepoints (E11342), pooled when they do not (E11834); LOCAL: `dose_nM=0, perturbation_class=baseline` | Never pairs across datasets even for the same line and drug. |
 | `transgene` | `construct=K, compound=doxycycline` | `construct=K, compound=none` | E11304 only. The EV row is always included as the dox-only null. |
 
@@ -299,27 +306,29 @@ Appendix A holds the draft plist, Caddyfile, Dockerfile, `.dockerignore`, `compo
 
 ## 8. Open decisions for you
 
-Already known from the kickoff:
+Resolved 2026-09-19 (your answers in chat):
 
-1. **License**: MIT is already in the repo (`LICENSE`, "JTARI Bioinformatics", 2026). Confirm, or switch to BSD-3 / Apache-2.0.
+1. **License**: MIT. Confirmed.
+4. **Annotation columns**: FL3C `notes` fields become typed `samples` columns (section 2.2). You will produce an updated upstream metadata sheet populating them for non-FL3C samples too (WES for the H3122/H2228 resistant series). Build reads the sheet's columns when present and parses FL3C `notes` as the fallback. Column names (`histology`, `mut_kras`, `mut_egfr`, `mut_tp53`, `mut_braf`, `proliferation_72h`) and the value convention (`p.G12C` / `WT` / NULL) are my proposal; tell me if you want different ones before Phase 2.
+8. **Reassigned samples**: relabel. `cell_line` = molecular identity (DFCI032), `cell_line_recorded` = lab label (H2228). Preferably fixed in the upstream sheet; build asserts consistency (section 2.2).
+11. **GTF**: you place `Homo_sapiens.GRCh38.113.gtf.gz` in the data folder; build reads it from there.
+16. **`PROMPT_mcp_server_kickoff.md`**: not committed; added to `.gitignore` on the planning branch. `PLAN.md` supersedes it as the project spec.
+
+Still open:
+
 2. **Zenodo** for the public E-MTAB re-quantified matrices so others can build `jtari-public.duckdb`? LOCAL stays private until published. (Zenodo: 50 GB / 100 files per record; the four public TPM+counts files total ~430 MB.)
-3. **`contrast` v1 method**: log2FC of mean TPM with n and SD (recommended, section 4.5) vs a proper DE method (needs counts; proposed for v2 via pydeseq2).
-4. **FL3C annotations**: fold the five `notes` fields into typed `samples` columns (`fl3c_subtype`, `fl3c_kras`, `fl3c_egfr`, `fl3c_tp53`, `fl3c_prolif72h`) so `find_samples` can filter (recommended), vs a separate tool, vs leave in `notes`.
-
-New from verification:
-
+3. **`contrast` v1 method**: descriptive log2FC of mean TPM (section 4.5) now, with a precomputed DESeq2 table as v2 (see the note under this list). Default is the descriptive version unless you object.
 5. **E11342 doses** are not on disk. Provide the paper/supplement and I will fill `dose_nM`; otherwise they stay NULL and the tool docs say so.
 6. **`none` controls in E11342/E11834**: untreated or vehicle? Needs the papers. Docs say "unknown" until then.
-7. **LOCAL dose conflicts** (CUTO46/SNU2535 300000 nM, DFCI032 1000 nM vs the sample names). Ask the wet lab. Until then: serve as recorded and add a `notes` flag at build (recommended), or fix the values.
-8. **Reassigned samples**: serve `cell_line` as recorded (H2228) with `identity_call=DFCI032` alongside and a flag (recommended; matches `METADATA_SCHEMA.md`), or relabel to DFCI032.
+7. **LOCAL dose conflicts** (CUTO46/SNU2535 300000 nM, DFCI032 1000 nM vs the sample names). Ask the wet lab. Until then: serve as recorded and add a `notes` flag at build (recommended), or fix the values in the updated sheet.
 9. **`parent_line` self-reference** `CUTO29.1 -> CUTO29.1` in `build_metadata.py`: fix upstream or ignore? The server ignores `parent_line` either way.
 10. **Default `include_suspect=False`**: confirm.
-11. **GTF source**: download from Ensembl at build (recommended) vs scp from Armis2 and pass `--gtf`.
 12. **Symbol display**: report Ensembl 113 `gene_symbol` even where `annot.tsv` disagrees (recommended; disagreements logged to provenance).
 13. **Bearer auth implementation**: Starlette middleware (recommended, 6.3a) vs SDK `TokenVerifier` (6.3b).
 14. **Mac Studio network placement**: HITS-managed or campus UMnet? Determines whether Phase 5 needs a HITS ticket or a unit firewall rule. Also: who are the two certificate managers for the InCommon cert?
 15. **LOCAL classification**: Moderate (default) or Low, per the PI.
-16. **Commit `PROMPT_mcp_server_kickoff.md`?** It is untracked. It names internal paths and an unpublished dataset; fine for a public repo in my view, but your call. `.memsearch/` will be gitignored in Phase 0.
+
+Note on decision 3. Two ways to compute a fold change. (a) **Descriptive**: `log2((mean TPM_group + 1) / (mean TPM_control + 1))`, with n and the SD of log2(TPM+1) per side. Works at any n, costs one SQL aggregate, gives no p-value, and treats TPM as the unit. (b) **Model-based DE**: DESeq2 or edgeR on raw counts; estimates a negative-binomial dispersion per gene by borrowing information across all genes, then reports a shrunken log2FC, a p-value and an FDR. Needs the count matrix, needs at least 2 (better 3+) replicates per side, and is a whole-matrix fit, so it cannot be run per gene on demand: each contrast pair takes seconds to a minute for the full 78,932 genes. Because the contrast space here is finite and fixed (roughly 20 chronic derivations, 60 acute arms, 5 transgene constructs), option (b) fits best as a **precomputed table** written by `build_db.py` (pydeseq2, one fit per design pair, results stored as `de_results(contrast_id, gene_id, log2fc, lfc_se, pvalue, padj, base_mean)`), which `contrast` then serves with `method="deseq2"`. That is v2. For v1, (a) ships the interface and the pairing rules, which is where the correctness risk lives.
 
 ## 9. Agent team (as run, and going forward)
 

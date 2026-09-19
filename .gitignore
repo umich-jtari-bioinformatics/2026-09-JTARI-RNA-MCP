@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project-local files never committed
+PROMPT_*.md
+.memsearch/
+data/
+*.duckdb
+*.duckdb.wal
