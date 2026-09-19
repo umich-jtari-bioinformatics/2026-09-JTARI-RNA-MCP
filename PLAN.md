@@ -108,6 +108,7 @@ CREATE TABLE samples (
   -- otherwise parsed from FL3C `notes` at build; NULL where unknown. Names to be settled with you.
   histology VARCHAR,                       -- e.g. lung_adenocarcinoma, nonadeno_nsclc (FL3C "subtype")
   mut_kras VARCHAR, mut_egfr VARCHAR, mut_tp53 VARCHAR, mut_braf VARCHAR,  -- protein-level calls, e.g. 'p.G12C'; 'WT'; NULL = not assessed
+  mut_alk VARCHAR,                         -- on-target ALK resistance mutations, e.g. 'p.G1202R'; 'WT'; NULL = not assessed
   proliferation_72h DOUBLE                 -- FL3C 72 h proliferation measure
 );
 
@@ -137,7 +138,7 @@ CREATE TABLE provenance (key VARCHAR PRIMARY KEY, value VARCHAR);
 -- n_samples=679, n_genes=78932, datasets_included
 ```
 
-`genes` build: read the Ensembl 113 GTF from the data directory (`--gtf PATH`, default `$JTARI_DATA_DIR/Homo_sapiens.GRCh38.113.gtf.gz`; you are placing a copy there, decision 8.11), record its sha256, parse `gene` features -> `gene_id, gene_name, gene_biotype`; assert the ID set equals the matrix set (78,932, zero missing); cross-check `gene_name` against `annot.tsv` `external_gene_name` and log disagreements into provenance. If the GTF is missing, fail loudly; no silent fallback to the 54%-coverage annot file. `--download-gtf` fetches the public Ensembl copy as a convenience.
+`genes` build: read the Ensembl 113 GTF from the data directory (`--gtf PATH`, default `$JTARI_DATA_DIR/Homo_sapiens.GRCh38.113.gtf`, `.gz` also accepted; the uncompressed copy is at `data/Homo_sapiens.GRCh38.113.gtf` in this repo's gitignored `data/`, 1.7 GB, 78,932 `gene` features, verified 2026-09-19), record its sha256, parse `gene` features -> `gene_id, gene_name, gene_biotype`; assert the ID set equals the matrix set (78,932, zero missing); cross-check `gene_name` against `annot.tsv` `external_gene_name` and log disagreements into provenance. If the GTF is missing, fail loudly; no silent fallback to the 54%-coverage annot file. `--download-gtf` fetches the public Ensembl copy as a convenience.
 
 Identity relabeling (decision 8.8, your answer 2026-09-19): the 12 `reassigned` rows are served with `cell_line = identity_call` (DFCI032) and `cell_line_recorded = H2228`, so a search or contrast on `H2228` never returns them and a search on `DFCI032` does. Preferred implementation: make the change in the upstream metadata sheet you are updating anyway (set `cell_line`, keep the lab label in `cell_line_recorded`, set `parent_line = DFCI032`), so the data is the truth and the server has no relabel logic. The build script asserts `identity_status = 'reassigned' implies cell_line = identity_call` and fails otherwise. The 8 `suspect` rows (unresolved H2228/DFCI032 mixtures) keep `cell_line = H2228` but are excluded by default from every tool and flagged whenever included. Consequence for `contrast`: DFCI032 gains chronic derivations (Cmax "BR3" 4 samples, StartIC50 "BR2" 4, StartIC50 "BR3" 4; the BR labels are inherited from the H2228 derivation series) paired against the confirmed DFCI032 parental (4 samples, 2 at 0 nM), and H2228 loses them.
 
@@ -309,15 +310,15 @@ Appendix A holds the draft plist, Caddyfile, Dockerfile, `.dockerignore`, `compo
 Resolved 2026-09-19 (your answers in chat):
 
 1. **License**: MIT. Confirmed.
-4. **Annotation columns**: FL3C `notes` fields become typed `samples` columns (section 2.2). You will produce an updated upstream metadata sheet populating them for non-FL3C samples too (WES for the H3122/H2228 resistant series). Build reads the sheet's columns when present and parses FL3C `notes` as the fallback. Column names (`histology`, `mut_kras`, `mut_egfr`, `mut_tp53`, `mut_braf`, `proliferation_72h`) and the value convention (`p.G12C` / `WT` / NULL) are my proposal; tell me if you want different ones before Phase 2.
-8. **Reassigned samples**: relabel. `cell_line` = molecular identity (DFCI032), `cell_line_recorded` = lab label (H2228). Preferably fixed in the upstream sheet; build asserts consistency (section 2.2).
-11. **GTF**: you place `Homo_sapiens.GRCh38.113.gtf.gz` in the data folder; build reads it from there.
+3. **`contrast` v1 method**: on-the-fly descriptive log2FC of mean TPM per gene (section 4.5). Precomputed DESeq2 table for the fixed contrast space is v2.
+4. **Annotation columns**: FL3C `notes` fields become typed `samples` columns (section 2.2). You will produce an updated upstream metadata sheet populating them for non-FL3C samples too (WES for the H3122/H2228 resistant series). Build reads the sheet's columns when present and parses FL3C `notes` as the fallback. Column names confirmed: `histology`, `mut_kras`, `mut_egfr`, `mut_tp53`, `mut_braf`, `mut_alk` (on-target ALK resistance mutations), `proliferation_72h`; values `p.G12C` / `WT` / NULL (not assessed).
+8. **Reassigned samples**: relabel, confirmed. `cell_line` = molecular identity (DFCI032), `cell_line_recorded` = lab label (H2228). Preferably fixed in the upstream sheet; build asserts consistency (section 2.2).
+11. **GTF**: `data/Homo_sapiens.GRCh38.113.gtf` (uncompressed, gitignored); build reads it from there.
 16. **`PROMPT_mcp_server_kickoff.md`**: not committed; added to `.gitignore` on the planning branch. `PLAN.md` supersedes it as the project spec.
 
 Still open:
 
 2. **Zenodo** for the public E-MTAB re-quantified matrices so others can build `jtari-public.duckdb`? LOCAL stays private until published. (Zenodo: 50 GB / 100 files per record; the four public TPM+counts files total ~430 MB.)
-3. **`contrast` v1 method**: descriptive log2FC of mean TPM (section 4.5) now, with a precomputed DESeq2 table as v2 (see the note under this list). Default is the descriptive version unless you object.
 5. **E11342 doses** are not on disk. Provide the paper/supplement and I will fill `dose_nM`; otherwise they stay NULL and the tool docs say so.
 6. **`none` controls in E11342/E11834**: untreated or vehicle? Needs the papers. Docs say "unknown" until then.
 7. **LOCAL dose conflicts** (CUTO46/SNU2535 300000 nM, DFCI032 1000 nM vs the sample names). Ask the wet lab. Until then: serve as recorded and add a `notes` flag at build (recommended), or fix the values in the updated sheet.
@@ -328,7 +329,7 @@ Still open:
 14. **Mac Studio network placement**: HITS-managed or campus UMnet? Determines whether Phase 5 needs a HITS ticket or a unit firewall rule. Also: who are the two certificate managers for the InCommon cert?
 15. **LOCAL classification**: Moderate (default) or Low, per the PI.
 
-Note on decision 3. Two ways to compute a fold change. (a) **Descriptive**: `log2((mean TPM_group + 1) / (mean TPM_control + 1))`, with n and the SD of log2(TPM+1) per side. Works at any n, costs one SQL aggregate, gives no p-value, and treats TPM as the unit. (b) **Model-based DE**: DESeq2 or edgeR on raw counts; estimates a negative-binomial dispersion per gene by borrowing information across all genes, then reports a shrunken log2FC, a p-value and an FDR. Needs the count matrix, needs at least 2 (better 3+) replicates per side, and is a whole-matrix fit, so it cannot be run per gene on demand: each contrast pair takes seconds to a minute for the full 78,932 genes. Because the contrast space here is finite and fixed (roughly 20 chronic derivations, 60 acute arms, 5 transgene constructs), option (b) fits best as a **precomputed table** written by `build_db.py` (pydeseq2, one fit per design pair, results stored as `de_results(contrast_id, gene_id, log2fc, lfc_se, pvalue, padj, base_mean)`), which `contrast` then serves with `method="deseq2"`. That is v2. For v1, (a) ships the interface and the pairing rules, which is where the correctness risk lives.
+Background on decision 3 (resolved: option a for v1). Two ways to compute a fold change. (a) **Descriptive**: `log2((mean TPM_group + 1) / (mean TPM_control + 1))`, with n and the SD of log2(TPM+1) per side. Works at any n, costs one SQL aggregate, gives no p-value, and treats TPM as the unit. (b) **Model-based DE**: DESeq2 or edgeR on raw counts; estimates a negative-binomial dispersion per gene by borrowing information across all genes, then reports a shrunken log2FC, a p-value and an FDR. Needs the count matrix, needs at least 2 (better 3+) replicates per side, and is a whole-matrix fit, so it cannot be run per gene on demand: each contrast pair takes seconds to a minute for the full 78,932 genes. Because the contrast space here is finite and fixed (roughly 20 chronic derivations, 60 acute arms, 5 transgene constructs), option (b) fits best as a **precomputed table** written by `build_db.py` (pydeseq2, one fit per design pair, results stored as `de_results(contrast_id, gene_id, log2fc, lfc_se, pvalue, padj, base_mean)`), which `contrast` then serves with `method="deseq2"`. That is v2. For v1, (a) ships the interface and the pairing rules, which is where the correctness risk lives.
 
 ## 9. Agent team (as run, and going forward)
 
