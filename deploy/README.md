@@ -6,14 +6,15 @@ API key. Each step ends with a **check**. Follows the JTARI DSS3 deployment patt
 Docker as the kickoff asked.
 
 ```
-Lab member's Claude ──https──▶ security group (443, 80) ──▶ EC2 t4g.medium
+Lab member's Claude ──https──▶ security group (443, 80) ──▶ EC2 t3.medium / t3.large (x86, as DSS3)
                                                              ├─ caddy  :443  (certificate, /mcp → mcp:8000)
                                                              └─ mcp    :8000 (key check → tools → data/jtari.duckdb, read-only)
 You (admin) ──ssh, your IP only──▶ port 22
 ```
 
-Cost: about $25/month for `t4g.medium` on demand, plus about $2 for a 20 GB disk and
-about $3.60 for a public IPv4 address. Stopping the instance stops the compute charge.
+Cost: about $30/month for `t3.medium` (or about $60 for `t3.large`, DSS3's size) on demand,
+plus about $2.40 for a 30 GB disk and about $3.60 for a public IPv4 address. Stopping the
+instance stops the compute charge.
 
 ---
 
@@ -47,12 +48,13 @@ EC2 → **Launch instance**:
 | Setting | Value |
 |---|---|
 | Name | `jtari-mcp` |
-| AMI | **Amazon Linux 2023**, architecture **64-bit (Arm)** |
-| Instance type | **t4g.medium** (2 vCPU, 4 GB) |
-| Key pair | **Create new** → `jtari-mcp`, type ED25519, `.pem`. Save it to `~/.ssh/jtari-mcp.pem`, then `chmod 600 ~/.ssh/jtari-mcp.pem` |
+| AMI | **Amazon Linux 2023**, architecture **64-bit (x86)**, the current default in the list (as DSS3; don't reuse DSS3's old AMI ID) |
+| Instance type | **t3.medium** (2 vCPU, 4 GB; enough) or **t3.large** (8 GB, as DSS3) |
+| Credit specification (Advanced) | **Unlimited** (as DSS3) |
+| Key pair | **Create new** → `jtari-mcp-pair`, type ED25519, `.pem`. A new key, not DSS3's. Save it to `~/.ssh/jtari-mcp-pair.pem` (not inside the repo folder), then `chmod 600` it |
 | Network → security group | **Create**, named `jtari-mcp-sg`, with 3 inbound rules: **SSH 22 from My IP**; **HTTPS 443 from Anywhere**; **HTTP 80 from Anywhere** (80 is only for the certificate check) |
-| Storage | 20 GiB gp3 |
-| Advanced → IAM instance profile | a role with **AmazonSSMManagedInstanceCore** only (as DSS3's `InstanceRole`): lets you open a shell from the console via Session Manager if SSH or your IP changes |
+| Storage | 30 GiB gp3 (as DSS3) |
+| Advanced → IAM instance profile | DSS3's existing **InstanceRole** (AmazonSSMManagedInstanceCore + CloudWatchAgentServerPolicy): lets you open a shell from the console via Session Manager if SSH or your IP changes |
 | Advanced → Termination protection | **Enable** (as DSS3): prevents an accidental delete |
 
 Then **Elastic IPs → Allocate → Associate** it with `jtari-mcp`. A fixed IP keeps the
@@ -62,19 +64,19 @@ hostname stable across reboots.
 `18-191-1-2.sslip.io`. sslip.io maps that name to the IP for free, so Caddy can get a
 real certificate. Written below as `HOST`.
 
-**Check:** `ssh -i ~/.ssh/jtari-mcp.pem ec2-user@<elastic-ip> 'uname -m'` prints `aarch64`.
+**Check:** `ssh -i ~/.ssh/jtari-mcp-pair.pem ec2-user@<elastic-ip> 'uname -m'` prints `x86_64`.
 
 ## 3. Install Docker on the instance
 
 ```bash
-ssh -i ~/.ssh/jtari-mcp.pem ec2-user@<elastic-ip>
+ssh -i ~/.ssh/jtari-mcp-pair.pem ec2-user@<elastic-ip>
 sudo dnf install -y docker
 sudo systemctl enable --now docker
 sudo usermod -aG docker ec2-user
 # compose plugin (not packaged in AL2023)
 sudo mkdir -p /usr/local/lib/docker/cli-plugins
 sudo curl -sSL -o /usr/local/lib/docker/cli-plugins/docker-compose \
-  https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-aarch64
+  https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-x86_64
 sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 exit   # log out and back in so the docker group applies
 ```
@@ -89,13 +91,13 @@ no git history.
 ```bash
 cd ~/2026-09-JTARI-RNA-MCP
 git archive --format=tar.gz -o /tmp/jtari-mcp.tar.gz HEAD
-scp -i ~/.ssh/jtari-mcp.pem /tmp/jtari-mcp.tar.gz ec2-user@<elastic-ip>:~
-ssh -i ~/.ssh/jtari-mcp.pem ec2-user@<elastic-ip> 'mkdir -p jtari-mcp/data && tar -xzf jtari-mcp.tar.gz -C jtari-mcp'
-rsync -av --progress -e "ssh -i ~/.ssh/jtari-mcp.pem" data/deploy/jtari.duckdb ec2-user@<elastic-ip>:~/jtari-mcp/data/
+scp -i ~/.ssh/jtari-mcp-pair.pem /tmp/jtari-mcp.tar.gz ec2-user@<elastic-ip>:~
+ssh -i ~/.ssh/jtari-mcp-pair.pem ec2-user@<elastic-ip> 'mkdir -p jtari-mcp/data && tar -xzf jtari-mcp.tar.gz -C jtari-mcp'
+rsync -av --progress -e "ssh -i ~/.ssh/jtari-mcp-pair.pem" data/deploy/jtari.duckdb ec2-user@<elastic-ip>:~/jtari-mcp/data/
 ```
 
 **Check:** on the instance, `ls -lh ~/jtari-mcp/data/jtari.duckdb` shows about 225 MB
-(about 150 MB public-only).
+(about 160 MB public-only).
 
 ## 5. Configure, create keys, start
 
