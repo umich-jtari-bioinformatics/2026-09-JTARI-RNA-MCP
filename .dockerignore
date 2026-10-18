@@ -1,0 +1,14 @@
+# Keep data, secrets and local state out of the image
+data/
+keys/
+results/
+.venv/
+.git/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.duckdb
+*.pem
+.env
+docs/
+tests/

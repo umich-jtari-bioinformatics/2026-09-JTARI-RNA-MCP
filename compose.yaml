@@ -1,0 +1,36 @@
+# Two containers: the MCP server (private network only) and Caddy (HTTPS on 443,
+# automatic Let's Encrypt certificate). Settings come from .env next to this file:
+#   JTARI_PUBLIC_HOST=18-191-1-2.sslip.io      # the server's public hostname
+# Run: docker compose up -d --build        Logs: docker compose logs -f mcp
+services:
+  mcp:
+    build: .
+    image: jtari-mcp:latest
+    restart: unless-stopped
+    environment:
+      JTARI_MCP_PUBLIC_HOST: ${JTARI_PUBLIC_HOST:?set JTARI_PUBLIC_HOST in .env}
+      JTARI_MCP_FORWARDED_ALLOW_IPS: "*"   # only Caddy can reach this container
+      JTARI_MCP_LOG_LEVEL: INFO
+    volumes:
+      - ./data/jtari.duckdb:/data/jtari.duckdb:ro   # the database, read-only
+      - ./keys:/keys                                # keys.json (hashes only)
+    expose: ["8000"]                                # not published on the host
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      JTARI_PUBLIC_HOST: ${JTARI_PUBLIC_HOST}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # certificates survive restarts
+      - caddy_config:/config
+    depends_on: [mcp]
+
+volumes:
+  caddy_data:
+  caddy_config:
