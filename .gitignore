@@ -216,3 +216,23 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- JTARI project ---
+# Input data and the built database never go into git (LOCAL is unpublished).
+data/
+*.duckdb
+*.duckdb.wal
+# HTTP auth keys (Phase 5)
+keys.json
+*.pem
+.DS_Store
+
+# Eval reports contain answers with LOCAL (unpublished) data
+results/
+keys/
+.env
+
+# Private planning notes: kept local only (they describe unpublished LOCAL data)
+PLAN.md
+docs/CHANGES.md
+docs/phases/

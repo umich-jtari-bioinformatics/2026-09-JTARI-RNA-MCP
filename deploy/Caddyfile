@@ -1,0 +1,14 @@
+# HTTPS front door. Caddy gets and renews the Let's Encrypt certificate itself.
+# /mcp* -> MCP server (it checks each person's API key itself)
+{$JTARI_PUBLIC_HOST} {
+	encode gzip
+	handle /mcp* {
+		reverse_proxy mcp:8000
+	}
+	handle /health {
+		reverse_proxy mcp:8000
+	}
+	handle {
+		respond "JTARI MCP server. Point an MCP client at /mcp with your API key." 200
+	}
+}

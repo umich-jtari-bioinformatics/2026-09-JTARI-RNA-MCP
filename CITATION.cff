@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "JTARI harmonized ALK cell-line RNA-seq MCP server"
+type: software
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/umich-jtari-bioinformatics/2026-09-JTARI-RNA-MCP"
+authors:
+  - name: "JTARI Bioinformatics, University of Michigan"
+  - family-names: Mukherjee
+    given-names: Gourab
+keywords:
+  - MCP
+  - RNA-seq
+  - ALK
+  - lung adenocarcinoma
+  - cell lines

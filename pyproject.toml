@@ -1,0 +1,36 @@
+[project]
+name = "jtari-mcp"
+version = "0.1.0"
+description = "MCP server over the JTARI harmonized ALK cell-line RNA-seq resource"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.13"
+dependencies = [
+    "duckdb==1.5.6",
+    "mcp==2.3.0",
+    "scipy==1.16.3",
+]
+
+[project.scripts]
+jtari-mcp = "jtari_mcp.server:main"
+jtari-build-db = "jtari_mcp.build_db:main"
+jtari-fetch-reference = "jtari_mcp.fetch_reference:main"
+jtari-keys = "jtari_mcp.auth:main"
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+# Only format Python; markdown code blocks in docs/ are illustrations.
+extend-exclude = ["*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.17.1",
+]
