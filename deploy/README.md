@@ -70,34 +70,42 @@ real certificate. Written below as `HOST`.
 
 ```bash
 ssh -i ~/.ssh/jtari-mcp-pair.pem ec2-user@<elastic-ip>
-sudo dnf install -y docker
+sudo dnf install -y docker rsync
 sudo systemctl enable --now docker
 sudo usermod -aG docker ec2-user
 # compose plugin (not packaged in AL2023)
 sudo mkdir -p /usr/local/lib/docker/cli-plugins
 sudo curl -sSL -o /usr/local/lib/docker/cli-plugins/docker-compose \
   https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-x86_64
-sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+sudo curl -sSL -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+  https://github.com/docker/buildx/releases/download/v0.29.1/buildx-v0.29.1.linux-amd64
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-buildx
 exit   # log out and back in so the docker group applies
 ```
 
-**Check:** `docker compose version` prints v2.39.4.
+**Check:** `docker compose version` prints v2.39.4 and `docker buildx version` v0.29.1.
 
-## 4. Copy the code and the database (from this Mac)
+## 4. Get the code (from GitHub) and the database (from this Mac)
 
-The code goes over as a clean archive of committed files only: no data, no keys,
-no git history.
+The repo is public, so the server clones it directly; updates are then `git pull`.
+On the instance:
+
+```bash
+sudo dnf install -y git
+git clone https://github.com/umich-jtari-bioinformatics/2026-09-JTARI-RNA-MCP.git ~/jtari-mcp
+mkdir -p ~/jtari-mcp/data
+```
+
+The database is not in git (it holds unpublished data). Copy it from this Mac:
 
 ```bash
 cd ~/2026-09-JTARI-RNA-MCP
-git archive --format=tar.gz -o /tmp/jtari-mcp.tar.gz HEAD
-scp -i ~/.ssh/jtari-mcp-pair.pem /tmp/jtari-mcp.tar.gz ec2-user@<elastic-ip>:~
-ssh -i ~/.ssh/jtari-mcp-pair.pem ec2-user@<elastic-ip> 'mkdir -p jtari-mcp/data && tar -xzf jtari-mcp.tar.gz -C jtari-mcp'
-rsync -av --progress -e "ssh -i ~/.ssh/jtari-mcp-pair.pem" data/deploy/jtari.duckdb ec2-user@<elastic-ip>:~/jtari-mcp/data/
+shasum -a 256 data/deploy/jtari.duckdb
+rsync -av --progress -e "ssh -i <path-to>/jtari-mcp-pair.pem" data/deploy/jtari.duckdb ec2-user@<elastic-ip>:~/jtari-mcp/data/
 ```
 
-**Check:** on the instance, `ls -lh ~/jtari-mcp/data/jtari.duckdb` shows about 225 MB
-(about 160 MB public-only).
+**Check:** on the instance, `sha256sum ~/jtari-mcp/data/jtari.duckdb` prints the same
+fingerprint as on the Mac.
 
 ## 5. Configure, create keys, start
 
@@ -138,7 +146,9 @@ JTARI_REMOTE_URL=https://HOST/mcp JTARI_REMOTE_KEY=<your key> \
 Store each key in the macOS Keychain, never in a config file or a chat:
 
 ```bash
-security add-generic-password -U -s jtari-mcp -a "$USER" -w "<key>"
+security add-generic-password -U -s jtari-mcp -a "$USER" -w     # paste ONLY the jtari_… key at the prompt
+security find-generic-password -s jtari-mcp -w | cut -c1-6          # check: prints jtari_
+security find-generic-password -s jtari-mcp -w | tr -d '\n' | wc -c  # check: prints 49
 ```
 
 **Claude Code** (any folder):
@@ -166,7 +176,7 @@ bridge (needs Node.js) in `claude_desktop_config.json`:
 
 | Change | Do |
 |---|---|
-| Code | repeat step 4 (archive + scp + untar), then `docker compose up -d --build` |
+| Code | `cd ~/jtari-mcp && git pull && docker compose up -d --build` |
 | Database | rsync the new file over the old one, then `docker compose restart mcp` |
 | Add LOCAL after PI sign-off | build the full DB (step 1), rsync, restart |
 
@@ -174,7 +184,7 @@ After every update, rerun step 6.
 
 ## Rollback and shutdown
 
-- **Previous code:** keep the last archive, untar it, then `docker compose up -d --build`.
+- **Previous code:** `git checkout <previous-commit>`, then `docker compose up -d --build`.
 - **Pause:** EC2 → Instance state → **Stop**. Compute charges stop; the disk and IP still
   cost about $5/month.
 - **Remove:** turn off termination protection, terminate the instance, **release the Elastic
