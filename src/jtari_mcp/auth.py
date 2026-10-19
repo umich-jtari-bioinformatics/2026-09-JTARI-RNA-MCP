@@ -70,15 +70,32 @@ class KeyStore:
         return None
 
 
+async def _drain(receive) -> None:
+    """Read and discard the request body. Answering without reading it leaves the unread
+    bytes on the connection; a proxy that reuses connections (Caddy does) then gets a
+    corrupted next response ("incomplete chunked read")."""
+    more = True
+    while more:
+        msg = await receive()
+        if msg["type"] != "http.request":
+            return
+        more = msg.get("more_body", False)
+
+
 async def _send_json(send, status: int, payload: dict, extra_headers=()) -> None:
+    body = json.dumps(payload).encode()
     await send(
         {
             "type": "http.response.start",
             "status": status,
-            "headers": [(b"content-type", b"application/json"), *extra_headers],
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+                *extra_headers,
+            ],
         }
     )
-    await send({"type": "http.response.body", "body": json.dumps(payload).encode()})
+    await send({"type": "http.response.body", "body": body})
 
 
 class BearerKeyMiddleware:
@@ -93,6 +110,7 @@ class BearerKeyMiddleware:
         if scope["type"] != "http":  # lifespan events pass straight through
             return await self.app(scope, receive, send)
         if scope.get("path") == "/health":
+            await _drain(receive)
             return await _send_json(send, 200, {"status": "ok"})
 
         headers = dict(scope.get("headers") or [])
@@ -106,6 +124,7 @@ class BearerKeyMiddleware:
                 scope.get("path"),
                 "no key" if not key else "invalid key",
             )
+            await _drain(receive)
             return await _send_json(
                 send,
                 401,

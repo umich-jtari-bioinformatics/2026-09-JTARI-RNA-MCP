@@ -122,3 +122,21 @@ def test_keys_are_stored_hashed(keys, capsys):
     stored = json.loads(keys.read_text())
     assert key not in keys.read_text() and len(stored["bob"]) == 64
     assert oct(keys.stat().st_mode)[-3:] == "600"
+
+
+def test_refusals_keep_a_reused_connection_clean(live):
+    """Refusals must leave a kept-alive connection usable (Caddy reuses connections).
+    Live behind Caddy, a refused request without reading its body gave the client an
+    "incomplete chunked read". This direct-connection test passes with or without the
+    body-draining fix (uvicorn copes when talking directly); it guards the behaviour,
+    it does not reproduce the Caddy-specific failure."""
+    base, key, _ = live
+    body = json.dumps({**LIST_TOOLS, "params": {"pad": "x" * 50_000}})
+    with httpx2.Client(timeout=10) as client:  # one kept-alive connection
+        for _ in range(3):
+            r = client.post(f"{base}/mcp", headers=HEADERS, content=body)
+            assert r.status_code == 401 and r.json()["error"] == "unauthorized"
+        ok = client.post(
+            f"{base}/mcp", headers={**HEADERS, "authorization": f"Bearer {key}"}, content=body
+        )
+        assert ok.status_code == 200
