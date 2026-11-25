@@ -69,6 +69,29 @@ def test_notes_substring_filter(db):
     assert [r["sample_id"] for r in rows] == ["FL3C::A427_rep1"]
 
 
+def test_resistance_mutation_substring_filter(db):
+    rows = table(tools.find_samples(db, {"alk_resistance_mutations": "g1202r"}))
+    assert sorted(r["sample_id"] for r in rows) == [
+        "E11342::CUTO29-lorla-24hr-rep1",
+        "LOCAL::13807-NM-7",
+    ]
+
+
+def test_alk_fusion_filter_exact_and_empty(db):
+    rows = table(tools.find_samples(db, {"alk_fusion_variant": "v1"}))
+    assert [r["sample_id"] for r in rows] == ["LOCAL::13807-NM-6"]
+    # 'none' (checked, absent) is a value of its own, distinct from empty (not annotated)
+    rows = table(tools.find_samples(db, {"alk_fusion": "none"}))
+    assert [r["sample_id"] for r in rows] == ["FL3C::A427_rep1"]
+
+
+def test_describe_metadata_lists_alk_values(db):
+    out = tools.describe_metadata(db, ["alk_fusion", "alk_resistance_mutations"])
+    text = str(out)
+    for value in ("EML4-ALK", "none", "G1202R/L1196M"):
+        assert value in text
+
+
 # ---------------------------------------------------------------- find_samples
 
 

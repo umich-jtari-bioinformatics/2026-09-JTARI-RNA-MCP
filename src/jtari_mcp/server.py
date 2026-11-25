@@ -89,7 +89,10 @@ Rules (definitions, not suggestions):
 - Suspect-identity samples are excluded by default. 'unverified' means never
   tested, not doubtful. When identity_mismatch is true, report identity_call
   alongside cell_line.
-- An empty dose_nM means unrecorded, not zero. Public-dataset doses are unrecorded.
+- An empty dose_nM means unrecorded, not zero. Public-dataset drug doses are unrecorded.
+- ALK annotation: alk_fusion, alk_fusion_variant, alk_fusion_exons and
+  alk_resistance_mutations. 'none' means checked and absent; empty means not
+  annotated, so never report an empty value as "no fusion" or "no mutation".
 - In E11304, doxycycline itself changes expression; EV +/- dox is the null.
 - 'none' controls in E11342/E11834 may be untreated or vehicle.
 - Report n with every summary. Never infer values a tool did not return, and
@@ -141,7 +144,7 @@ Filters = Annotated[
         description=(
             "Metadata column -> value or list of values (AND across columns, OR within a "
             'list), e.g. {"dataset": "E11834", "cell_line": ["CUTO8", "H3122"], '
-            '"compound": "lorlatinib"}. null matches empty. "notes" matches a substring. '
+            '"compound": "lorlatinib"}. null matches empty. "notes" and "alk_resistance_mutations" match a substring. '
             "Valid columns and values: describe_metadata."
         )
     ),

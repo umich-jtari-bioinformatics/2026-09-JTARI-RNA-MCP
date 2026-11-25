@@ -55,7 +55,40 @@ def test_classes_and_identity(con):
 def test_derived_columns(con):
     assert one(con, "SELECT count(DISTINCT construct) FROM samples") == 5
     assert one(con, "SELECT count(*) FROM samples WHERE chronic_state = 'parental'") == 10
-    assert one(con, "SELECT count(*) FROM samples WHERE 'dose_suspect' = ANY(data_flags)") == 4
+    # The 2026-11-24 sheet corrected the 300000 nM slips (CUTO46, SNU2535) to 300 nM.
+    assert one(con, "SELECT count(*) FROM samples WHERE 'dose_suspect' = ANY(data_flags)") == 0
+    assert (
+        one(
+            con,
+            "SELECT count(*) FROM samples WHERE dataset = 'LOCAL' "
+            "AND cell_line IN ('CUTO46', 'SNU2535') AND dose_nM = 300",
+        )
+        == 4
+    )
+
+
+def test_alk_annotation(con):
+    """Spot checks of the ALK columns on lines in the public datasets."""
+
+    def calls(line, dataset):
+        return con.execute(
+            "SELECT DISTINCT alk_fusion, alk_fusion_variant FROM samples "
+            "WHERE effective_cell_line = ? AND dataset = ? ORDER BY ALL",
+            [line, dataset],
+        ).fetchall()
+
+    for dataset in ("E11342", "E11834"):
+        assert calls("CUTO8", dataset) == [("EML4-ALK", "V1")]
+        assert calls("CUTO29", dataset) == [("EML4-ALK", "V3")]
+    # YU1077 is published as ALK G1202R; every E11342 sample of it carries the annotation
+    assert (
+        one(
+            con,
+            "SELECT count(*) FROM samples WHERE dataset = 'E11342' AND cell_line = 'YU1077' "
+            "AND alk_resistance_mutations LIKE '%G1202R%'",
+        )
+        == 18
+    )
 
 
 def test_genes(con):

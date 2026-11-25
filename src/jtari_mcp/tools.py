@@ -35,12 +35,21 @@ COLUMN_DOCS = {
     "parent_line": "Parental line where recorded. Empty for the chronic-resistance series; "
     "use chronic_state instead.",
     "lineage": "Tissue/lineage class, e.g. lung_adeno, alcl, neuroblastoma.",
-    "fusion": "ALK fusion, e.g. EML4-ALK_V1; 'unknown' where not annotated, 'none' if absent.",
+    "alk_fusion": "ALK fusion partner: EML4-ALK, KIF5B-ALK, TFG-ALK, NPM1-ALK; 'none' = checked, "
+    "no ALK fusion; empty = not annotated (not proof of absence).",
+    "alk_fusion_variant": "Fusion variant, e.g. V1, V3 (EML4-ALK), K24;A20 (KIF5B exon 24 to ALK "
+    "exon 20). Empty = not annotated.",
+    "alk_fusion_exons": "Fusion breakpoint exons, partner;ALK, e.g. E13;A20 (EML4 exon 13 to "
+    "ALK exon 20), E6;A20, E6;A19. Empty = not annotated.",
+    "alk_resistance_mutations": "ALK kinase-domain resistance mutations, e.g. G1202R, C1156Y; "
+    "several joined with '/', e.g. G1202R/L1196M. 'none' = checked, none found; empty = not "
+    "annotated. Filters match a substring, so {'alk_resistance_mutations': 'G1202R'} also finds "
+    "G1202R/L1196M.",
     "fusion_source": "endogenous, transgene or none.",
     "perturbation_class": "baseline, acute_drug, chronic_resistance or transgene_induction.",
     "compound": "Drug: alectinib, lorlatinib, brigatinib, trametinib, doxycycline, or none.",
-    "dose_nM": "Dose in nM (integer). 0 = explicitly no drug; empty = unrecorded or not "
-    "applicable (all public datasets are unrecorded).",
+    "dose_nM": "Dose in nM (integer). 0 = explicitly no drug (incl. untreated controls); empty = "
+    "unrecorded or not applicable (all public-dataset drug doses are unrecorded).",
     "timepoint_h": "Hours of treatment (6 or 24). Empty = unrecorded (E11834 controls, all LOCAL).",
     "resistance_protocol": "StartLow, StartIC50 or Cmax: three independent protocols, not a "
     "dose ladder.",
@@ -64,13 +73,15 @@ COLUMN_DOCS = {
     "chronic_state": "LOCAL resistance series: parental (0 nM), resistant_off_drug (0 nM), "
     "resistant_on_drug (1300/1500 nM).",
     "derivative_id": "Resistant derivative 'line:protocol:BR', e.g. H3122:Cmax:BR2.",
-    "data_flags": "Known data issues, e.g. dose_suspect (300000 nM, probably 300 nM).",
+    "data_flags": "Known data issues, e.g. dose_suspect (a dose recorded as 300000 nM).",
 }
 
 INT_COLUMNS = {"dose_nM", "timepoint_h", "replicate"}
 BOOL_COLUMNS = {"identity_mismatch"}
 # Too many distinct values to list; describe_metadata shows a count and examples.
 FREE_TEXT_COLUMNS = {"sample_id", "matrix_sample_id", "label", "notes"}
+# Filters on these match a case-insensitive substring instead of an exact value.
+SUBSTRING_COLUMNS = {"notes", "alk_resistance_mutations"}
 SAMPLE_COLUMNS = list(COLUMN_DOCS)
 
 # Default sort: what "ordered by treatment" usually means.
@@ -205,8 +216,8 @@ def normalise_filters(
         values = raw if isinstance(raw, list) else [raw]
         if not values:
             raise QueryError(f"Filter '{col}' has an empty list.")
-        if col == "notes":
-            # substring match; None matches samples without notes
+        if col in SUBSTRING_COLUMNS:
+            # substring match; None matches samples with an empty value
             out[col] = [None if v is None else str(v).lower() for v in values]
             continue
         if col in LIST_COLUMNS:
@@ -252,7 +263,7 @@ def normalise_filters(
 def matches(sample: dict, filters: dict) -> bool:
     for col, wanted in filters.items():
         value = sample[col]
-        if col == "notes":
+        if col in SUBSTRING_COLUMNS:
             if not any(
                 (value is None) if w is None else (w in (value or "").lower()) for w in wanted
             ):

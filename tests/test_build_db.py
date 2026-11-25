@@ -195,3 +195,46 @@ def test_provenance_shape(built):
     assert rows == [("tpm", "LOCAL", len(GENES), 7)]
     prov = dict(query(built["out"], "SELECT key, value FROM provenance_build"))
     assert prov["gtf_verified"] == "False"
+
+
+def test_alk_annotation_columns(built):
+    rows = dict(
+        query(
+            built["out"],
+            "SELECT sample_id, [alk_fusion, alk_fusion_variant, alk_fusion_exons, "
+            "alk_resistance_mutations] FROM samples",
+        )
+    )
+    assert rows["LOCAL::13807-NM-1"] == ["EML4-ALK", "V3", "E6;A20", None]
+    assert rows["LOCAL::13807-NM-7"] == ["EML4-ALK", None, None, "G1202R/L1196M"]
+    assert rows["FL3C::A427_rep1"] == ["none", None, None, "none"]
+    assert rows["E11834::CUTO29-ctrl-rep1"] == [None, None, None, None]
+
+
+def test_missing_metadata_column_fails(inputs):
+    path = inputs["data_dir"] / "sample_metadata.tsv"
+    text = path.read_text().replace("alk_fusion_exons", "exons", 1)
+    path.write_text(text)
+    with pytest.raises(build_db.BuildError, match=r"lacks columns \['alk_fusion_exons'\]"):
+        build_db.build(inputs["data_dir"], inputs["out"], inputs["gtf"], expected_gtf_sha256=None)
+
+
+def test_metadata_override(inputs, tmp_path):
+    """--metadata reads a sheet kept outside the data folder; provenance records its name only."""
+    src = inputs["data_dir"] / "sample_metadata.tsv"
+    sheet = tmp_path / "elsewhere" / "updated_sheet.tsv"
+    sheet.parent.mkdir()
+    sheet.write_text(src.read_text().replace("G1202R/L1196M", "G1202R"))
+    src.unlink()
+    build_db.build(
+        inputs["data_dir"], inputs["out"], inputs["gtf"], expected_gtf_sha256=None, metadata=sheet
+    )
+    muts = query(
+        inputs["out"],
+        "SELECT alk_resistance_mutations FROM samples WHERE sample_id = 'LOCAL::13807-NM-7'",
+    )
+    assert muts == [("G1202R",)]
+    paths = query(
+        inputs["out"], "SELECT rel_path FROM provenance_inputs WHERE role = 'sample_metadata'"
+    )
+    assert paths == [("updated_sheet.tsv",)]
