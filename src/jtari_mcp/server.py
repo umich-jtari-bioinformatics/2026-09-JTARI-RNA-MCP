@@ -89,14 +89,16 @@ Rules (definitions, not suggestions):
 - Suspect-identity samples are excluded by default. 'unverified' means never
   tested, not doubtful. When identity_mismatch is true, report identity_call
   alongside cell_line.
-- An empty dose_nM means unrecorded, not zero. Public-dataset drug doses are unrecorded.
+- dose_nM 0 means no drug (untreated controls, including public-dataset controls);
+  empty means unrecorded, not zero. Public-dataset drug doses are unrecorded.
 - ALK annotation: alk_fusion, alk_fusion_variant, alk_fusion_exons and
   alk_resistance_mutations. 'none' means checked and absent; empty means not
   annotated, so never report an empty value as "no fusion" or "no mutation".
 - In E11304, doxycycline itself changes expression; EV +/- dox is the null.
 - 'none' controls in E11342/E11834 may be untreated or vehicle.
-- Report n with every summary. Never infer values a tool did not return, and
-  never quote totals from a result whose 'complete' is false.
+- Report n with every summary. Never infer values a tool did not return. Long
+  tables are paged: 'complete' becomes true on the page that reaches the last row
+  (next_offset null). Quote totals only after reading every page from offset 0.
 """
 
 mcp = MCPServer(

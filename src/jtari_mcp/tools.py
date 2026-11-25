@@ -168,7 +168,9 @@ def suggest(value: str, choices, n: int = 5) -> str:
 def table_envelope(
     columns: list[str], rows: list[list], offset: int, limit: int, query_echo: dict
 ) -> dict:
-    """Page `rows` by limit and by the character budget; say whether the table is complete."""
+    """Page `rows` by limit and by the character budget. `complete` is true once this
+    page reaches the last row (next_offset is then null): a client that has read every
+    page from offset 0 has the whole table."""
     total = len(rows)
     page = rows[offset : offset + limit]
     # Shrink the page until the CSV fits the budget.
@@ -182,7 +184,7 @@ def table_envelope(
         "n_rows_total": total,
         "returned": len(page),
         "offset": offset,
-        "complete": offset == 0 and end >= total,
+        "complete": end >= total,
         "next_offset": end if end < total else None,
         "table_csv": text,
     }
