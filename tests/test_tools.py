@@ -125,7 +125,8 @@ def test_paging(db):
     first = tools.find_samples(db, limit=5)
     assert first["returned"] == 5 and not first["complete"] and first["next_offset"] == 5
     rest = tools.find_samples(db, limit=100, offset=5)
-    assert rest["next_offset"] is None
+    # the last page reaches the end: complete agrees with next_offset
+    assert rest["next_offset"] is None and rest["complete"]
     assert first["n_rows_total"] == rest["n_rows_total"] == len(SAMPLES) - 1  # minus suspect
 
 
