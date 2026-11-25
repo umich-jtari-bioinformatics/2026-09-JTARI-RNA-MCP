@@ -119,8 +119,9 @@ CONSTRUCTS = {
     "V3": "EML4-ALK_V3",
 }
 
-# Known data issues flagged per sample: LOCAL alectinib recorded at
-# 300000 nM (300 uM) in CUTO46 and SNU2535 looks like a unit slip for 300 nM.
+# Known data issues flagged per sample. LOCAL alectinib was recorded at 300000 nM in
+# CUTO46 and SNU2535 (a unit slip, corrected to 300 nM in the 2026-11-24 sheet); kept as
+# a guard in case an older sheet is used.
 SUSPECT_DOSES_NM = {300000}
 
 
@@ -140,7 +141,11 @@ def read_metadata(path: Path, keep: set[str]) -> list[dict]:
     """Parse sample_metadata.tsv. The csv module handles the quoted multi-line
     'notes' values that line-based tools (cut, awk) would split."""
     with open(path, newline="", encoding="utf-8") as f:
-        rows = [r for r in csv.DictReader(f, delimiter="\t") if r["dataset"] in keep]
+        reader = csv.DictReader(f, delimiter="\t")
+        missing = [c for c in METADATA_COLUMNS if c not in (reader.fieldnames or [])]
+        if missing:
+            raise BuildError(f"{path.name} lacks columns {missing}")
+        rows = [r for r in reader if r["dataset"] in keep]
     for r in rows:
         for k, v in r.items():
             if v == "":
@@ -217,7 +222,10 @@ SAMPLE_COLUMNS = [
     ("cell_line_raw", "VARCHAR"),
     ("parent_line", "VARCHAR"),
     ("lineage", "VARCHAR"),
-    ("fusion", "VARCHAR"),
+    ("alk_fusion", "VARCHAR"),
+    ("alk_fusion_variant", "VARCHAR"),
+    ("alk_fusion_exons", "VARCHAR"),
+    ("alk_resistance_mutations", "VARCHAR"),
     ("fusion_source", "VARCHAR"),
     ("perturbation_class", "VARCHAR"),
     ("compound", "VARCHAR"),
@@ -242,6 +250,17 @@ SAMPLE_COLUMNS = [
     ("derivative_id", "VARCHAR"),
     ("data_flags", "VARCHAR[]"),
 ]
+DERIVED_COLUMNS = {
+    "sample_idx",
+    "effective_cell_line",
+    "identity_mismatch",
+    "construct",
+    "chronic_state",
+    "derivative_id",
+    "data_flags",
+}
+# Columns the metadata sheet must supply (extra columns are ignored).
+METADATA_COLUMNS = [c for c, _ in SAMPLE_COLUMNS if c not in DERIVED_COLUMNS]
 
 
 def load_samples(con: duckdb.DuckDBPyConnection, rows: list[dict]) -> None:
@@ -555,12 +574,17 @@ def build(
     exclude: tuple[str, ...] = (),
     memory_limit: str = "2GB",
     expected_gtf_sha256: str | None = GTF_SHA256,
+    metadata: Path | None = None,
 ) -> dict:
     """Build the database at `out`. Returns a summary of row counts.
 
-    `expected_gtf_sha256=None` skips the GTF check (tests use a tiny synthetic GTF);
-    provenance then records gtf_verified=False."""
+    `metadata` overrides `data_dir/sample_metadata.tsv` (e.g. an updated sheet kept
+    elsewhere). `expected_gtf_sha256=None` skips the GTF check (tests use a tiny
+    synthetic GTF); provenance then records gtf_verified=False."""
     data_dir = Path(data_dir).resolve()
+    metadata = Path(metadata).resolve() if metadata else data_dir / "sample_metadata.tsv"
+    if not metadata.exists():
+        raise BuildError(f"metadata not found: {metadata}")
     unknown = set(exclude) - set(DATASETS)
     if unknown:
         raise BuildError(f"unknown dataset(s) to exclude: {sorted(unknown)}")
@@ -571,7 +595,7 @@ def build(
     if expected_gtf_sha256 is not None and gtf_sha256 != expected_gtf_sha256:
         raise BuildError(f"{gtf} is not the pinned Ensembl r113 GTF (sha256 {gtf_sha256})")
 
-    rows = read_metadata(data_dir / "sample_metadata.tsv", set(datasets))
+    rows = read_metadata(metadata, set(datasets))
     add_derived_columns(rows)
     for i, r in enumerate(rows):
         r["sample_idx"] = i
@@ -606,7 +630,7 @@ def build(
         inputs = [
             {
                 "role": "sample_metadata",
-                "path": data_dir / "sample_metadata.tsv",
+                "path": metadata,
                 "n_rows": len(rows),
             }
         ]
@@ -658,6 +682,12 @@ def main() -> None:
         default=os.environ.get("JTARI_DATA_DIR"),
         help="folder with sample_metadata.tsv and the dataset folders (or set JTARI_DATA_DIR)",
     )
+    p.add_argument(
+        "--metadata",
+        type=Path,
+        default=None,
+        help="sample metadata TSV to use instead of <data-dir>/sample_metadata.tsv",
+    )
     p.add_argument("--out", type=Path, default=Path("data/jtari.duckdb"))
     p.add_argument("--gtf", type=Path, default=DEFAULT_GTF)
     p.add_argument(
@@ -682,7 +712,14 @@ def main() -> None:
             f"warning: {args.schema_doc} not found; schema resource will be empty", file=sys.stderr
         )
     try:
-        summary = build(args.data_dir, args.out, args.gtf, schema_doc, tuple(args.exclude_dataset))
+        summary = build(
+            args.data_dir,
+            args.out,
+            args.gtf,
+            schema_doc,
+            tuple(args.exclude_dataset),
+            metadata=args.metadata,
+        )
     except BuildError as e:
         raise SystemExit(f"build failed: {e}")
     print(summary)
